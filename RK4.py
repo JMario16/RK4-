@@ -1,33 +1,35 @@
 import customtkinter as ctk
-from tkinter import ttk,messagebox
-from sympy import symbols, sympify, lambdify, sin, cos, exp, log, sqrt
-from sympy.parsing.sympy_parser import (
-    parse_expr,
-    standard_transformations,
-    implicit_multiplication_application
-)
-import math
+from tkinter import ttk, messagebox
+
+from sympy import Function, dsolve, Eq, symbols, lambdify, sin, cos, exp, log, sqrt
+from sympy.parsing.sympy_parser import (parse_expr, standard_transformations, implicit_multiplication_application, convert_xor)
+
+import matplotlib.pyplot as plt
 
 ctk.set_appearance_mode("dark")
 
-# - - - VARIABLES GLOBALES
-valores_x = []
-valores_y = []
-y_solucion = []
-error = []
+# - - - VARIABLES GLOBALES - - -
+
+valores_x=[]
+valores_y=[]
+y_solucion=[]
+error_abs=[]
+error_rel=[]
 
 # - - - PALETA COLORES Y FUENTE - - -
 
 Fuente=("Leelawadee UI", 14)
+FuenteTTK=("Leelawadee UI", 10)
 FuenteTitulo=("Leelawadee UI", 22, "bold")
 FuenteBoton=("Leelawadee UI", 14, "bold")
+FuenteBotonTTK=("Leelawadee UI", 10, "bold")
 
 Blanco="#F0F0F0"
 Azul="#121729"
 AzulClaro="#1B2347"
 AzulFuerte="#151B36"
 
-# - - - VENTANA PRINCIPAL - - -
+# - - - VENTANA PRINCIPAL Y ESTILOS - - -
 
 ventana=ctk.CTk()
 ventana.title("RK4")
@@ -44,25 +46,51 @@ ventana.grid_rowconfigure(3, weight=1)
 ventana.grid_columnconfigure(0, weight=1)
 ventana.grid_columnconfigure(1, weight=1)
 
+#--estilo treeview--
+style=ttk.Style(ventana)
+style.theme_use("clam")
+style.configure("Treeview", background=AzulFuerte, foreground=Blanco, rowheight=24, fieldbackground=AzulFuerte, font=FuenteTTK)
+style.configure("Treeview.Heading", background=AzulClaro, foreground=Blanco, font=FuenteBotonTTK, relief="flat")
+style.map("Treeview.Heading", background=[("active", Azul)])
+style.map("Treeview", background=[("selected", Azul)], foreground=[("selected", Blanco)])
+
 # - - - FUNCIONES - - -
 
-x,y = symbols("x y")
+x, y=symbols("x y")
+g=Function("g")
 
-def convertir_funcion(texto):
-    transform = standard_transformations + (implicit_multiplication_application,)
-    expr = parse_expr(texto, transformations=transform)
-    f = lambdify((x, y), expr, "numpy")
-    return f
-
-def on_click_calcular():
+def btnGraficar():
     try:
-        funcion = entry_funcion.get()
-        aux = entry_PVI.get()
-        x0_aux, y0_aux = aux.split(",")
-        x0 = float(x0_aux)
-        y0 = float(y0_aux)
-        h = float(entry_h.get())
-        xf = float(entry_xf.get())
+        if not valores_x or not valores_y:
+            messagebox.showwarning("Sin datos", "Debe calcular los valores antes de graficar.")
+        else:
+            plt.figure("Gráfica del método de Euler")
+            plt.plot(valores_x, valores_y, marker='o', color='cyan', label='Aproximación')
+            plt.plot(valores_x, y_solucion, marker='o', color='red', label='Valor real')
+            plt.title("Comparación Método de Euler")
+            plt.xlabel("x")
+            plt.ylabel("y")
+            plt.grid(True, linestyle='--', alpha=0.6)
+            plt.legend()
+            plt.show()
+    except Exception as e:
+        messagebox.showerror("Error al graficar", f"Ocurrió un error: {e}")
+
+def btnCalcular():
+    try:
+        funcion=entry_funcion.get()
+        x0_aux, y0_aux=entry_PVI.get().split(",")
+        x0=float(x0_aux)
+        y0=float(y0_aux)
+        h=float(entry_h.get())
+        xf=float(entry_xf.get())
+        if h <= 0:
+            messagebox.showerror("Error", "El tamaño de paso debe ser positivo")
+            return
+        if xf < x0 :
+            messagebox.showerror("Error", "El valor de x final debe ser mayor que el de x inicial")
+            return
+
         calcular(x0, y0, xf, h, funcion)
     except ValueError:
         messagebox.showerror("Error", "Ingrese los campos")
@@ -70,60 +98,80 @@ def on_click_calcular():
         messagebox.showerror("Error", "Ingrese una función válida.")
     except TypeError:
         messagebox.showerror("Error", "Ingrese una función valida")
-    
-    
-def calcular(x0, y0, xf, h, fun):
-    #Limpiar frame
+      
+def calcular(x0, y0, xf, h, funcion):
     for widget in frame_tabla.winfo_children():
         widget.destroy()
-    
-    #Limpiar arreglo de valores
+
+    #--limpiar arreglos--
     valores_x.clear()
     valores_y.clear()
-    
-    #funcion = sympify(fun)
-    f = convertir_funcion(fun)
-    
-    n = int((xf - x0) / h)
-    
+    y_solucion.clear()
+    error_abs.clear()
+    error_rel.clear()
+
+    func=convertirFuncion(funcion)
+    n=int((xf-x0)/h)
+
+    #--resolver la edo--
+    edo=Eq(g(x).diff(x), func.subs(y, g(x)))
+    sol=dsolve(edo, g(x), ics={g(x0): y0})
+    expr=sol.rhs
+
+    #--función simbólica--
+    f=lambdify((x, y), func, "numpy") 
+
+    #--función solución--
+    s=lambdify(x, expr, "numpy")
+
     valores_x.append(x0)
     valores_y.append(y0)
+    y_solucion.append(y0)
+    error_abs.append(0)
+    error_rel.append(0)
     
+    #--calcular aproximacion--
     for i in range(n):
-        x_actual = x0 + h*(i+1)
+        x_actual=x0 + h*(i+1)
         valores_x.append(x_actual)
+
         k1, k2, k3, k4 = 0, 0, 0, 0
-        k1 = f(valores_x[i],valores_y[i])
-        k2 = f(valores_x[i]+0.5*h, valores_y[i]+0.5*h*k1)
-        k3 = f(valores_x[i]+0.5*h, valores_y[i]+0.5*h*k2)
-        k4 = f(valores_x[i]+h, valores_y[i]+h*k3)
-        y_actual = valores_y[i] + ((1/6)*h)*(k1 + 2*k2 + 2*k3 + k4)
+        k1=f(valores_x[i], valores_y[i])
+        k2=f(valores_x[i]+0.5*h, valores_y[i]+0.5*h*k1)
+        k3=f(valores_x[i]+0.5*h, valores_y[i]+0.5*h*k2)
+        k4=f(valores_x[i]+h, valores_y[i]+h*k3)
+        y_actual=valores_y[i] + ((1/6)*h)*(k1 + 2*k2 + 2*k3 + k4)
         valores_y.append(y_actual)
-        
-    #Mostrar la tabla con valores
-    columnas = ("Iteracion","x", "y", "valor_real", "error_absoluto","error_relativo")
+        y_solucion.append(s(x_actual))
     
-    tabla = ttk.Treeview(frame_tabla, columns=columnas, show="headings", height=10)
-    # Encabezados
-    tabla.heading("Iteracion", text="n")
+    #--crear tabla--
+    tabla=ttk.Treeview(frame_tabla, columns=("iteracion","x", "y", "valor_real", "error_absoluto","error_relativo"), show="headings", height=8)
+    tabla.heading("iteracion", text="n")
     tabla.heading("x", text="xₙ")
     tabla.heading("y", text="yₙ")
     tabla.heading("valor_real", text="Valor real")
     tabla.heading("error_absoluto", text="Error absoluto")
-    tabla.heading("error_relativo", text="% de error relativo")
+    tabla.heading("error_relativo", text="Error relativo %")
 
-    # Ancho de columnas
-    tabla.column("Iteracion", width=80, anchor="center")
+    tabla.column("iteracion", width=80, anchor="center")
     tabla.column("x", width=80, anchor="center")
     tabla.column("y", width=80, anchor="center")
     tabla.column("valor_real", width=100, anchor="center")
     tabla.column("error_absoluto", width=100, anchor="center")
     tabla.column("error_relativo", width=100, anchor="center")
     
+    #--insertar resultados en la tabla--
     for i in range(n+1):
-        tabla.insert("", "end", values=(i,round(valores_x[i],4),round(valores_y[i],4),0,0,0))
+        ea = abs(y_solucion[i] - valores_y[i])
+        er = abs(ea / valores_y[i]) * 100 if valores_y[i] != 0 else 0
+        tabla.insert("", "end", values=(i, round(valores_x[i], 4), round(valores_y[i], 4), round(y_solucion[i], 4), round(ea, 4), round(er, 4)))
     
     tabla.pack(fill="both", expand=True)
+
+def convertirFuncion(txt):
+	trnsf=standard_transformations+(implicit_multiplication_application, convert_xor)
+	expr=parse_expr(txt, transformations=trnsf)
+	return expr
 
 # - - - COMPONENTES - - -
 
@@ -162,7 +210,7 @@ etiqueta_PVI=ctk.CTkLabel(frame_der, text="Ingrese el PVI:", text_color=Blanco, 
 etiqueta_PVI.grid(row=1, column=0, pady=5, padx=15, sticky="w")
 etiqueta_h=ctk.CTkLabel(frame_der, text="Ingrese el tamaño de paso:", text_color=Blanco, font=Fuente)
 etiqueta_h.grid(row=2, column=0, pady=5, padx=15, sticky="w")
-etiqueta_xf=ctk.CTkLabel(frame_der,text="Ingrese el punto de aproximación (x final):", text_color=Blanco, font=Fuente)
+etiqueta_xf=ctk.CTkLabel(frame_der,text="Ingrese el punto de aproximación:", text_color=Blanco, font=Fuente)
 etiqueta_xf.grid(row=3, column=0, pady=5, padx=15, sticky="w")
 
 entry_funcion=ctk.CTkEntry(frame_der, fg_color=Azul, font=Fuente, width=400, border_width=0)
@@ -178,9 +226,9 @@ entry_xf.grid(row=3, column=1, padx=15, pady=(5, 15), sticky="ew")
 frame_botones=ctk.CTkFrame(ventana, fg_color=AzulFuerte, bg_color=Azul, corner_radius=10, border_width=2, border_color=AzulFuerte)
 frame_botones.grid(row=2, column=0, columnspan=2, pady=10, padx=20, sticky="nsew")
 
-boton_calcular=ctk.CTkButton(frame_botones, width=50, text="Calcular", text_color=Blanco, font=FuenteBoton, fg_color=Azul, hover_color=AzulClaro, command=on_click_calcular)
+boton_calcular=ctk.CTkButton(frame_botones, width=50, text="Calcular", text_color=Blanco, font=FuenteBoton, fg_color=Azul, hover_color=AzulClaro, command=btnCalcular)
 boton_calcular.grid(row=0, column=1, padx=15, pady=10, ipady=2, sticky="ew")
-boton_graficar=ctk.CTkButton(frame_botones, width=50, text="Graficar", text_color=Blanco, font=FuenteBoton, fg_color=Azul, hover_color=AzulClaro)
+boton_graficar=ctk.CTkButton(frame_botones, width=50, text="Graficar", text_color=Blanco, font=FuenteBoton, fg_color=Azul, hover_color=AzulClaro, command=btnGraficar)
 boton_graficar.grid(row=0, column=2, padx=15, pady=10, ipady=2, sticky="ew")
 
 frame_botones.grid_columnconfigure(0, weight=1)
@@ -190,8 +238,59 @@ frame_botones.grid_columnconfigure(3, weight=1)
 
 #--frame datos--
 frame_tabla=ctk.CTkFrame(ventana, fg_color=AzulFuerte, bg_color=Azul, corner_radius=10, border_width=2, border_color=AzulFuerte)
-frame_tabla.grid(row=3, column=0, columnspan=2, pady=(10, 20), padx=20, sticky="nsew")
+frame_tabla.grid(row=3, column=0, columnspan=2, pady=(10, 20), padx=20, ipadx=10, ipady=10, sticky="nsew")
 
-#--datos--
+# --- ToolTip para ingresar la función ---
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tooltip = None
+
+        widget.bind("<Enter>", self.mostrar)
+        widget.bind("<Leave>", self.ocultar)
+
+    def mostrar(self, event=None):
+        if self.tooltip:
+            return
+
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+
+        self.tooltip = ctk.CTkToplevel(self.widget)
+        self.tooltip.overrideredirect(True)
+        self.tooltip.geometry(f"+{x}+{y}")
+
+        label = ctk.CTkLabel(
+            self.tooltip,
+            text=self.text,
+            justify="left",
+            fg_color="#1B2347",
+            text_color="#F0F0F0",
+            corner_radius=8,
+            padx=10,
+            pady=8,
+            font=("Leelawadee UI", 11)
+        )
+        label.pack()
+
+    def ocultar(self, event=None):
+        if self.tooltip:
+            self.tooltip.destroy()
+            self.tooltip = None
+            
+mensaje_funcion = (
+    "Use:\n"
+    "  sin(x), cos(x), exp(x), log(x), sqrt(x)\n\n"
+    "Se permite multiplicación implícita:\n"
+    "  2xy, 3x(x+1)\n\n"
+    "No use:\n"
+    "  sen(x), ln(x), xsin(x)"
+)
+
+ToolTip(entry_funcion, mensaje_funcion)
+ToolTip(entry_PVI, "Ingrese el valor de y(x₀) separado por comas. Ej: 0,1")
+ToolTip(entry_h, "Tamaño de paso (h > 0)")
+ToolTip(entry_xf, "Valor final de x")
 
 ventana.mainloop()
